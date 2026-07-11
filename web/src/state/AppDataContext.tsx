@@ -42,6 +42,9 @@ const emptyCache: ClientCache = {
   latestAi: null
 };
 
+const HEALTH_FRESH_WINDOW_DAYS = 2;
+const AUTO_SYNC_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+
 const AppDataContext = createContext<AppDataContextValue | null>(null);
 
 export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; children: ReactNode }) {
@@ -106,8 +109,8 @@ export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; 
       try {
         const summary = await api.summary(apiBaseUrl);
         if (cancelled) return;
-        const backendIsFresh = isRecentHealthDate(summary.latest_health_date);
-        if (!backendIsFresh) {
+        if (shouldAutoSync(summary.latest_health_date, apiBaseUrl)) {
+          markAutoSyncAttempt(apiBaseUrl);
           await refreshFromBackend({ sync: true, days: 30 });
           return;
         }
@@ -157,6 +160,7 @@ export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; 
 
   const clearCache = useCallback(() => {
     localStorage.removeItem(cacheKey(apiBaseUrl));
+    localStorage.removeItem(autoSyncKey(apiBaseUrl));
     setCache(emptyCache);
   }, [apiBaseUrl]);
 
@@ -274,5 +278,32 @@ function localDate(offsetDays = 0) {
 function isRecentHealthDate(value: string | null) {
   if (!value) return false;
   const healthDate = value.slice(0, 10);
-  return healthDate >= localDate(-1);
+  return healthDate >= localDate(-HEALTH_FRESH_WINDOW_DAYS);
+}
+
+function shouldAutoSync(latestHealthDate: string | null, apiBaseUrl: string) {
+  if (isRecentHealthDate(latestHealthDate)) return false;
+  const lastAttempt = readLastAutoSyncAttempt(apiBaseUrl);
+  if (Number.isFinite(lastAttempt) && Date.now() - lastAttempt < AUTO_SYNC_COOLDOWN_MS) return false;
+  return true;
+}
+
+function readLastAutoSyncAttempt(apiBaseUrl: string) {
+  try {
+    return Number(localStorage.getItem(autoSyncKey(apiBaseUrl)) || "0");
+  } catch {
+    return 0;
+  }
+}
+
+function markAutoSyncAttempt(apiBaseUrl: string) {
+  try {
+    localStorage.setItem(autoSyncKey(apiBaseUrl), String(Date.now()));
+  } catch {
+    // Ignore storage failures; auto sync should never block app bootstrap.
+  }
+}
+
+function autoSyncKey(apiBaseUrl: string) {
+  return `garminInsight.lastAutoSyncAt.${apiBaseUrl}`;
 }
