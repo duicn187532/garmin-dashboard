@@ -429,7 +429,6 @@ def get_store() -> Iterator[SqlDataStore | MongoDataStore]:
     settings = get_settings()
     if settings.database_backend == "mongodb":
         store = MongoDataStore(settings)
-        store.ensure_indexes()
         yield store
         return
     db = SessionLocal()
