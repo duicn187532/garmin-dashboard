@@ -51,6 +51,8 @@ async def app_access_auth(request: Request, call_next):
 
 
 def should_require_app_token(request: Request) -> bool:
+    if request.method == "OPTIONS":
+        return False
     if not settings.app_access_token:
         return False
     if not request.url.path.startswith("/api"):
