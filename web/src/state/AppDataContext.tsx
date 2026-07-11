@@ -54,7 +54,7 @@ export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; 
   const saveCache = useCallback(
     (next: ClientCache) => {
       setCache(next);
-      localStorage.setItem(cacheKey(apiBaseUrl), JSON.stringify(next));
+      saveCacheToStorage(apiBaseUrl, next);
     },
     [apiBaseUrl]
   );
@@ -186,6 +186,80 @@ function loadCache(apiBaseUrl: string): ClientCache {
   } catch {
     return emptyCache;
   }
+}
+
+function saveCacheToStorage(apiBaseUrl: string, cache: ClientCache) {
+  const key = cacheKey(apiBaseUrl);
+  const compact = compactCacheForStorage(cache);
+  try {
+    localStorage.removeItem(key);
+    localStorage.setItem(key, JSON.stringify(compact));
+  } catch {
+    const minimal: ClientCache = {
+      ...emptyCache,
+      savedAt: compact.savedAt,
+      summary: compact.summary,
+      today: compact.today
+        ? {
+            ...compact.today,
+            ai_report: compact.today.ai_report ? compactAiReport(compact.today.ai_report) : null,
+            recent_activities: compact.today.recent_activities.slice(0, 5)
+          }
+        : null,
+      trendsByRange: {
+        "7d": compact.trendsByRange["7d"]
+      }
+    };
+    try {
+      localStorage.removeItem(key);
+      localStorage.setItem(key, JSON.stringify(minimal));
+    } catch {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
+function compactCacheForStorage(cache: ClientCache): ClientCache {
+  return {
+    ...cache,
+    latestAi: cache.latestAi ? compactAiReport(cache.latestAi) : null,
+    today: cache.today
+      ? {
+          ...cache.today,
+          ai_report: cache.today.ai_report ? compactAiReport(cache.today.ai_report) : null
+        }
+      : null
+  };
+}
+
+function compactAiReport(report: AiReport): AiReport {
+  return {
+    ...report,
+    evidence_json: summarizeEvidence(report.evidence_json)
+  };
+}
+
+function summarizeEvidence(evidence: Record<string, unknown>): Record<string, unknown> {
+  const dailyHealth = Array.isArray(evidence.daily_health) ? evidence.daily_health : [];
+  const derivedMetrics = Array.isArray(evidence.derived_metrics) ? evidence.derived_metrics : [];
+  const activities = Array.isArray(evidence.activities) ? evidence.activities : [];
+  return {
+    has_data: evidence.has_data,
+    range: evidence.range,
+    latest_health: compactRecord(evidence.latest_health),
+    latest_metric: compactRecord(evidence.latest_metric),
+    counts: {
+      daily_health: dailyHealth.length,
+      derived_metrics: derivedMetrics.length,
+      activities: activities.length
+    }
+  };
+}
+
+function compactRecord(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { raw_json, evidence_json, ...rest } = value as Record<string, unknown>;
+  return rest;
 }
 
 function localDate(offsetDays = 0) {
