@@ -106,14 +106,15 @@ export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; 
       try {
         const summary = await api.summary(apiBaseUrl);
         if (cancelled) return;
-        const today = localToday();
-        const cacheIsToday = cached.today?.health?.date === today;
-        const backendIsToday = summary.latest_health_date === today;
-        if (!backendIsToday) {
+        const backendIsFresh = isRecentHealthDate(summary.latest_health_date);
+        if (!backendIsFresh) {
           await refreshFromBackend({ sync: true, days: 30 });
           return;
         }
-        if (!cached.today || !cacheIsToday || cached.summary?.latest_health_date !== summary.latest_health_date) {
+        const cacheMatchesBackend =
+          cached.summary?.latest_health_date === summary.latest_health_date &&
+          cached.today?.health?.date === summary.latest_health_date;
+        if (!cached.today || !cacheMatchesBackend) {
           await refreshFromBackend({ sync: false });
           return;
         }
@@ -187,11 +188,17 @@ function loadCache(apiBaseUrl: string): ClientCache {
   }
 }
 
-function localToday() {
+function localDate(offsetDays = 0) {
   const now = new Date();
+  now.setDate(now.getDate() + offsetDays);
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
   const day = String(now.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
+function isRecentHealthDate(value: string | null) {
+  if (!value) return false;
+  const healthDate = value.slice(0, 10);
+  return healthDate >= localDate(-1);
+}
