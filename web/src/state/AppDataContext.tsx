@@ -114,10 +114,7 @@ export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; 
           await refreshFromBackend({ sync: true, days: 30 });
           return;
         }
-        const cacheMatchesBackend =
-          cached.summary?.latest_health_date === summary.latest_health_date &&
-          cached.today?.health?.date === summary.latest_health_date;
-        if (!cached.today || !cacheMatchesBackend) {
+        if (!isCompleteCacheForSummary(cached, summary)) {
           await refreshFromBackend({ sync: false });
           return;
         }
@@ -190,6 +187,15 @@ function loadCache(apiBaseUrl: string): ClientCache {
   } catch {
     return emptyCache;
   }
+}
+
+function isCompleteCacheForSummary(cache: ClientCache, summary: Summary) {
+  const latestHealthDate = summary.latest_health_date;
+  if (!cache.today || !cache.summary || !cache.activities) return false;
+  if (!cache.trendsByRange["7d"] || !cache.trendsByRange["30d"] || !cache.trendsByRange["90d"]) return false;
+  if (cache.summary.latest_health_date !== latestHealthDate) return false;
+  if (cache.today.health?.date !== latestHealthDate) return false;
+  return true;
 }
 
 function saveCacheToStorage(apiBaseUrl: string, cache: ClientCache) {
