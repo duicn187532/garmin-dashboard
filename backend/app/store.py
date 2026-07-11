@@ -5,7 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from statistics import mean
 from typing import Any, Iterator
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 
 from .config import Settings, get_settings
 from .database import SessionLocal
@@ -27,21 +27,41 @@ class SqlDataStore:
     def ping(self) -> None:
         self.db.execute(text("select 1"))
 
+    def latest_usable_health(self) -> DailyHealth | None:
+        usable = (
+            self.db.query(DailyHealth)
+            .filter(sql_health_signal_filter())
+            .order_by(DailyHealth.date.desc())
+            .first()
+        )
+        return usable or self.db.query(DailyHealth).order_by(DailyHealth.date.desc()).first()
+
     def summary(self) -> dict[str, Any]:
-        latest_health = self.db.query(func.max(DailyHealth.date)).scalar()
+        latest_health = self.latest_usable_health()
         latest_activity = self.db.query(func.max(Activity.start_time)).scalar()
         return {
             "activities": self.db.query(Activity).count(),
             "daily_health_days": self.db.query(DailyHealth).count(),
             "ai_reports": self.db.query(AiReport).count(),
-            "latest_health_date": latest_health.isoformat() if latest_health else None,
+            "latest_health_date": latest_health.date.isoformat() if latest_health else None,
             "latest_activity_time": latest_activity.isoformat() if latest_activity else None,
         }
 
     def dashboard_today(self) -> dict[str, Any]:
-        health = self.db.query(DailyHealth).order_by(DailyHealth.date.desc()).first()
-        metric = self.db.query(DerivedMetric).order_by(DerivedMetric.date.desc()).first()
-        report = self.db.query(AiReport).order_by(AiReport.created_at.desc()).first()
+        health = self.latest_usable_health()
+        metric = (
+            self.db.query(DerivedMetric).filter(DerivedMetric.date == health.date).one_or_none()
+            if health
+            else self.db.query(DerivedMetric).order_by(DerivedMetric.date.desc()).first()
+        )
+        report = (
+            self.db.query(AiReport)
+            .filter(AiReport.report_date == health.date)
+            .order_by(AiReport.created_at.desc())
+            .first()
+            if health
+            else self.db.query(AiReport).order_by(AiReport.created_at.desc()).first()
+        )
         recent_activity = self.db.query(Activity).order_by(Activity.start_time.desc()).limit(5).all()
         return {
             "health": serialize_sql_health(health) if health else None,
@@ -209,8 +229,12 @@ class MongoDataStore:
             upsert=True,
         )
 
+    def latest_usable_health(self) -> dict[str, Any] | None:
+        usable = self.db.daily_health.find_one(mongo_health_signal_query(), sort=[("date", -1)])
+        return usable or self.db.daily_health.find_one(sort=[("date", -1)])
+
     def summary(self) -> dict[str, Any]:
-        latest_health = self.db.daily_health.find_one(sort=[("date", -1)])
+        latest_health = self.latest_usable_health()
         latest_activity = self.db.activities.find_one(sort=[("start_time", -1)])
         return {
             "activities": self.db.activities.count_documents({}),
@@ -221,9 +245,17 @@ class MongoDataStore:
         }
 
     def dashboard_today(self) -> dict[str, Any]:
-        health = self.db.daily_health.find_one(sort=[("date", -1)])
-        metric = self.db.derived_metrics.find_one(sort=[("date", -1)])
-        report = self.db.ai_reports.find_one(sort=[("created_at", -1)])
+        health = self.latest_usable_health()
+        metric = (
+            self.db.derived_metrics.find_one({"date": health["date"]})
+            if health
+            else self.db.derived_metrics.find_one(sort=[("date", -1)])
+        )
+        report = (
+            self.db.ai_reports.find_one({"report_date": health["date"]}, sort=[("created_at", -1)])
+            if health
+            else self.db.ai_reports.find_one(sort=[("created_at", -1)])
+        )
         recent = list(self.db.activities.find({}, sort=[("start_time", -1)], limit=5))
         return {
             "health": mongo_clean(health) if health else None,
@@ -398,8 +430,7 @@ class MongoDataStore:
         evidence = self.collect_evidence(days)
         provider = create_ai_provider(self.settings)
         answer = provider.generate(build_grounded_prompt(question, evidence), evidence)
-        latest_health = self.db.daily_health.find_one(sort=[("date", -1)])
-        report_date = latest_health["date"] if latest_health else date.today().isoformat()
+        report_date = evidence.get("range", {}).get("end_date") or date.today().isoformat()
         now = datetime.now(timezone.utc)
         doc = {
             "id": str(now.timestamp()),
@@ -416,9 +447,9 @@ class MongoDataStore:
         return mongo_clean(doc)
 
     def collect_evidence(self, days: int) -> dict[str, Any]:
-        latest_health = self.db.daily_health.find_one(sort=[("date", -1)])
-        latest_metric = self.db.derived_metrics.find_one(sort=[("date", -1)])
+        latest_health = self.latest_usable_health()
         anchor = date.fromisoformat(latest_health["date"]) if latest_health else date.today()
+        latest_metric = self.db.derived_metrics.find_one({"date": anchor.isoformat()})
         start_date = anchor - timedelta(days=days - 1)
         health = list(self.db.daily_health.find({"date": {"$gte": start_date.isoformat(), "$lte": anchor.isoformat()}}, sort=[("date", 1)]))
         metrics = list(self.db.derived_metrics.find({"date": {"$gte": start_date.isoformat(), "$lte": anchor.isoformat()}}, sort=[("date", 1)]))
@@ -463,6 +494,24 @@ def get_store() -> Iterator[SqlDataStore | MongoDataStore]:
 @contextmanager
 def store_context() -> Iterator[SqlDataStore | MongoDataStore]:
     yield from get_store()
+
+
+HEALTH_SIGNAL_FIELDS = [
+    "resting_hr",
+    "sleep_hours",
+    "stress_avg",
+    "body_battery_min",
+    "body_battery_max",
+    "hrv_avg",
+]
+
+
+def sql_health_signal_filter():
+    return or_(DailyHealth.steps > 0, *(getattr(DailyHealth, field).isnot(None) for field in HEALTH_SIGNAL_FIELDS))
+
+
+def mongo_health_signal_query() -> dict[str, Any]:
+    return {"$or": [{"steps": {"$gt": 0}}, *({field: {"$ne": None}} for field in HEALTH_SIGNAL_FIELDS)]}
 
 
 def range_to_days(value: str) -> int:

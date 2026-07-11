@@ -1,6 +1,7 @@
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ...config import Settings
@@ -24,10 +25,19 @@ class GroundedQueryService:
         evidence = self.collect_evidence(days=self._infer_days(question))
         return self._create_report("query", question, evidence)
 
+    def latest_usable_health(self) -> DailyHealth | None:
+        usable = (
+            self.db.query(DailyHealth)
+            .filter(sql_health_signal_filter())
+            .order_by(DailyHealth.date.desc())
+            .first()
+        )
+        return usable or self.db.query(DailyHealth).order_by(DailyHealth.date.desc()).first()
+
     def collect_evidence(self, days: int) -> dict[str, Any]:
-        latest_health = self.db.query(DailyHealth).order_by(DailyHealth.date.desc()).first()
-        latest_metric = self.db.query(DerivedMetric).order_by(DerivedMetric.date.desc()).first()
+        latest_health = self.latest_usable_health()
         anchor_date = latest_health.date if latest_health else date.today()
+        latest_metric = self.db.query(DerivedMetric).filter(DerivedMetric.date == anchor_date).one_or_none()
         start_date = anchor_date - timedelta(days=days - 1)
         start_dt = datetime.combine(start_date, time.min, tzinfo=timezone.utc)
         end_dt = datetime.combine(anchor_date + timedelta(days=1), time.min, tzinfo=timezone.utc)
@@ -65,8 +75,7 @@ class GroundedQueryService:
     def _create_report(self, report_type: str, question: str, evidence: dict[str, Any]) -> AiReport:
         prompt = build_grounded_prompt(question, evidence)
         answer = self.provider.generate(prompt, evidence)
-        latest_health = self.db.query(DailyHealth).order_by(DailyHealth.date.desc()).first()
-        report_date = latest_health.date if latest_health else date.today()
+        report_date = date.fromisoformat(evidence["range"]["end_date"]) if evidence.get("range") else date.today()
         report = AiReport(
             report_date=report_date,
             report_type=report_type,
@@ -141,3 +150,17 @@ def serialize_metric(row: DerivedMetric | None) -> dict[str, Any] | None:
         "recovery_score": row.recovery_score,
         "risk_level": row.risk_level,
     }
+
+
+HEALTH_SIGNAL_FIELDS = [
+    "resting_hr",
+    "sleep_hours",
+    "stress_avg",
+    "body_battery_min",
+    "body_battery_max",
+    "hrv_avg",
+]
+
+
+def sql_health_signal_filter():
+    return or_(DailyHealth.steps > 0, *(getattr(DailyHealth, field).isnot(None) for field in HEALTH_SIGNAL_FIELDS))
