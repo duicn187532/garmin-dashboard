@@ -1,0 +1,32 @@
+name: Scheduled Garmin Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 21 * * *"
+
+jobs:
+  sync-and-analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Garmin sync
+        run: |
+          curl --fail --show-error --request POST "$API_URL/api/sync/garmin" \
+            --header "Content-Type: application/json" \
+            --header "X-App-Token: $APP_ACCESS_TOKEN" \
+            --header "X-Sync-Token: $SYNC_TOKEN" \
+            --data '{"days": 30}'
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          APP_ACCESS_TOKEN: ${{ secrets.APP_ACCESS_TOKEN }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+
+      - name: Run AI analysis
+        run: |
+          curl --fail --show-error --request POST "$API_URL/api/ai/analyze" \
+            --header "Content-Type: application/json" \
+            --header "X-App-Token: $APP_ACCESS_TOKEN" \
+            --data '{"report_type": "today"}'
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          APP_ACCESS_TOKEN: ${{ secrets.APP_ACCESS_TOKEN }}

@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.venv
+__pycache__
+.pytest_cache
+*.db
+*.sqlite
+*.sqlite3
+.garmin_tokens
+garmin_raw
+raw
+tests
+

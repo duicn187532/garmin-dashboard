@@ -1,0 +1,36 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+      - ./backend
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - garmin-insight-backend
+      - --image
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+      - --region
+      - ${_REGION}
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --set-env-vars
+      - ENVIRONMENT=production,DATABASE_BACKEND=mongodb,MONGODB_DATABASE=${_MONGODB_DATABASE},CORS_ORIGINS=${_CORS_ORIGINS},AI_PROVIDER=gemini,GEMINI_MODEL=${_GEMINI_MODEL}
+      - --set-secrets
+      - MONGODB_URI=MONGODB_URI:latest,GARMIN_EMAIL=GARMIN_EMAIL:latest,GARMIN_PASSWORD=GARMIN_PASSWORD:latest,APP_ACCESS_TOKEN=APP_ACCESS_TOKEN:latest,SYNC_TOKEN=SYNC_TOKEN:latest
+substitutions:
+  _REGION: asia-east1
+  _ARTIFACT_REPOSITORY: garmin-insight
+  _MONGODB_DATABASE: garmin_insight
+  _GEMINI_MODEL: gemini-2.5-flash-lite
+  _CORS_ORIGINS: https://YOUR_GITHUB_USERNAME.github.io
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA

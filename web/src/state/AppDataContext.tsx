@@ -1,0 +1,197 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { api, getSyncToken } from "../api/client";
+import type { ActivityListResponse, AiReport, DashboardTrendsResponse, TodayResponse } from "../types/api";
+
+type Summary = {
+  activities: number;
+  daily_health_days: number;
+  ai_reports: number;
+  latest_health_date: string | null;
+  latest_activity_time: string | null;
+};
+
+type ClientCache = {
+  savedAt: string;
+  summary: Summary | null;
+  today: TodayResponse | null;
+  trendsByRange: Record<string, DashboardTrendsResponse | undefined>;
+  activities: ActivityListResponse | null;
+  latestAi: AiReport | null;
+};
+
+type AppDataContextValue = {
+  apiBaseUrl: string;
+  range: string;
+  setRange: (range: string) => void;
+  cache: ClientCache;
+  loading: boolean;
+  syncing: boolean;
+  error: string | null;
+  refreshFromBackend: (options?: { sync?: boolean; days?: number }) => Promise<void>;
+  runAnalyze: () => Promise<void>;
+  askAi: (question: string) => Promise<AiReport>;
+  clearCache: () => void;
+};
+
+const emptyCache: ClientCache = {
+  savedAt: "",
+  summary: null,
+  today: null,
+  trendsByRange: {},
+  activities: null,
+  latestAi: null
+};
+
+const AppDataContext = createContext<AppDataContextValue | null>(null);
+
+export function AppDataProvider({ apiBaseUrl, children }: { apiBaseUrl: string; children: ReactNode }) {
+  const [range, setRange] = useState("30d");
+  const [cache, setCache] = useState<ClientCache>(() => loadCache(apiBaseUrl));
+  const [loading, setLoading] = useState(!loadCache(apiBaseUrl).today);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const saveCache = useCallback(
+    (next: ClientCache) => {
+      setCache(next);
+      localStorage.setItem(cacheKey(apiBaseUrl), JSON.stringify(next));
+    },
+    [apiBaseUrl]
+  );
+
+  const refreshFromBackend = useCallback(
+    async (options: { sync?: boolean; days?: number } = {}) => {
+      setError(null);
+      setSyncing(Boolean(options.sync));
+      setLoading((current) => current || !cache.today);
+      try {
+        if (options.sync) {
+          await api.sync(options.days || 30, getSyncToken(), apiBaseUrl);
+        }
+        const [summary, today, trends7, trends30, trends90, activities, latestAi] = await Promise.all([
+          api.summary(apiBaseUrl),
+          api.today(apiBaseUrl),
+          api.trends("7d", apiBaseUrl),
+          api.trends("30d", apiBaseUrl),
+          api.trends("90d", apiBaseUrl),
+          api.activities(new URLSearchParams({ page: "1", page_size: "200", sort: "start_time_desc" }), apiBaseUrl),
+          api.latestAi(apiBaseUrl)
+        ]);
+        saveCache({
+          savedAt: new Date().toISOString(),
+          summary,
+          today,
+          activities,
+          latestAi,
+          trendsByRange: { "7d": trends7, "30d": trends30, "90d": trends90 }
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+        setSyncing(false);
+      }
+    },
+    [apiBaseUrl, cache.today, saveCache]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = loadCache(apiBaseUrl);
+    setCache(cached);
+    setLoading(!cached.today);
+    setError(null);
+
+    async function bootstrap() {
+      try {
+        const summary = await api.summary(apiBaseUrl);
+        if (cancelled) return;
+        const today = localToday();
+        const cacheIsToday = cached.today?.health?.date === today;
+        const backendIsToday = summary.latest_health_date === today;
+        if (!backendIsToday) {
+          await refreshFromBackend({ sync: true, days: 30 });
+          return;
+        }
+        if (!cached.today || !cacheIsToday || cached.summary?.latest_health_date !== summary.latest_health_date) {
+          await refreshFromBackend({ sync: false });
+          return;
+        }
+        saveCache({ ...cached, summary, savedAt: cached.savedAt || new Date().toISOString() });
+        setLoading(false);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        }
+      }
+    }
+
+    bootstrap();
+    return () => {
+      cancelled = true;
+    };
+  }, [apiBaseUrl]);
+
+  const runAnalyze = useCallback(async () => {
+    setError(null);
+    try {
+      const report = await api.analyze(apiBaseUrl);
+      const next = { ...cache, latestAi: report, today: cache.today ? { ...cache.today, ai_report: report } : cache.today };
+      saveCache(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [apiBaseUrl, cache, saveCache]);
+
+  const askAi = useCallback(
+    async (question: string) => {
+      const report = await api.ask(question, apiBaseUrl);
+      const next = { ...cache, latestAi: report };
+      saveCache(next);
+      return report;
+    },
+    [apiBaseUrl, cache, saveCache]
+  );
+
+  const clearCache = useCallback(() => {
+    localStorage.removeItem(cacheKey(apiBaseUrl));
+    setCache(emptyCache);
+  }, [apiBaseUrl]);
+
+  const value = useMemo(
+    () => ({ apiBaseUrl, range, setRange, cache, loading, syncing, error, refreshFromBackend, runAnalyze, askAi, clearCache }),
+    [apiBaseUrl, range, cache, loading, syncing, error, refreshFromBackend, runAnalyze, askAi, clearCache]
+  );
+
+  return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
+}
+
+export function useAppData() {
+  const value = useContext(AppDataContext);
+  if (!value) throw new Error("useAppData must be used within AppDataProvider.");
+  return value;
+}
+
+function cacheKey(apiBaseUrl: string) {
+  return `garminInsight.clientCache.${apiBaseUrl}`;
+}
+
+function loadCache(apiBaseUrl: string): ClientCache {
+  const raw = localStorage.getItem(cacheKey(apiBaseUrl));
+  if (!raw) return emptyCache;
+  try {
+    return { ...emptyCache, ...JSON.parse(raw) };
+  } catch {
+    return emptyCache;
+  }
+}
+
+function localToday() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+

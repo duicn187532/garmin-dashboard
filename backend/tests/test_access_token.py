@@ -1,0 +1,14 @@
+from dataclasses import replace
+
+from fastapi.testclient import TestClient
+
+import app.main as main
+
+
+def test_app_access_token_protects_private_api(monkeypatch):
+    monkeypatch.setattr(main, "settings", replace(main.settings, app_access_token="test-token"))
+    with TestClient(main.app) as client:
+        denied = client.get("/api/summary")
+        allowed = client.get("/api/summary", headers={"X-App-Token": "test-token"})
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
