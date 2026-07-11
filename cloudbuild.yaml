@@ -3,12 +3,12 @@ steps:
     args:
       - build
       - -t
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$BUILD_ID
       - ./backend
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$BUILD_ID
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args:
@@ -16,7 +16,7 @@ steps:
       - deploy
       - garmin-insight-backend
       - --image
-      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$BUILD_ID
       - --region
       - ${_REGION}
       - --platform
@@ -33,4 +33,4 @@ substitutions:
   _GEMINI_MODEL: gemini-2.5-flash-lite
   _CORS_ORIGINS: https://YOUR_GITHUB_USERNAME.github.io
 images:
-  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$SHORT_SHA
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_ARTIFACT_REPOSITORY}/garmin-insight-backend:$BUILD_ID
