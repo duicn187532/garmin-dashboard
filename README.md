@@ -67,7 +67,7 @@ Do not commit `.env`, tokens, SQLite DB files, raw Garmin files, or personal exp
 
 ## Key API Workflows
 
-- Sync: `POST /api/sync/garmin` with `{ "days": 30 }`
+- Sync: `POST /api/sync/garmin` with `{ "days": 30 }`. For first-time Garmin MFA initialization, include `{ "days": 30, "mfa_code": "123456" }`.
 - Today dashboard: `GET /api/dashboard/today`
 - Activity search: `GET /api/activities?...filters`
 - Health trend: `GET /api/health/trends?metric=hrv&range=30d`
@@ -92,6 +92,8 @@ GitHub Actions sync example is in `.github/workflows/scheduled-sync.yml`. Add re
 
 - `API_URL`
 - `SYNC_TOKEN`
+
+In MongoDB production mode, successful Garmin login tokens are stored in MongoDB so Cloud Run restarts do not require a new MFA flow unless Garmin invalidates the session.
 
 For GitHub Pages, add repository variables:
 

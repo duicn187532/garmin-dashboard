@@ -29,7 +29,8 @@ def sync_garmin(
 ):
     require_sync_token(settings, x_sync_token, authorization)
     try:
-        response = store.sync(UnofficialGarminConnector(settings), days=request.days)
+        connector = build_garmin_connector(settings, store, request.mfa_code)
+        response = store.sync(connector, days=request.days)
         LAST_SYNC_STATUS.update(
             {
                 "state": "ok",
@@ -59,3 +60,17 @@ def require_sync_token(settings: Settings, x_sync_token: str | None, authorizati
         return
     raise HTTPException(status_code=401, detail="Invalid sync token.")
 
+
+def build_garmin_connector(
+    settings: Settings,
+    store: SqlDataStore | MongoDataStore,
+    mfa_code: str | None = None,
+) -> UnofficialGarminConnector:
+    token_reader = getattr(store, "load_garmin_token_blob", None)
+    token_writer = getattr(store, "save_garmin_token_blob", None)
+    return UnofficialGarminConnector(
+        settings,
+        mfa_code=mfa_code,
+        token_reader=token_reader if callable(token_reader) else None,
+        token_writer=token_writer if callable(token_writer) else None,
+    )

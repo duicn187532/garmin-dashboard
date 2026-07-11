@@ -109,6 +109,7 @@ class AiReportResponse(ORMModel):
 
 class SyncRequest(BaseModel):
     days: int = Field(default=30, ge=1, le=365)
+    mfa_code: str | None = Field(default=None, min_length=4, max_length=32)
 
 
 class SyncResponse(BaseModel):

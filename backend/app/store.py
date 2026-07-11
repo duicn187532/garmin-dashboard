@@ -183,9 +183,31 @@ class MongoDataStore:
         self.db.daily_health.create_index("date", unique=True)
         self.db.derived_metrics.create_index("date", unique=True)
         self.db.ai_reports.create_index("created_at")
+        self.db.integration_state.create_index("updated_at")
 
     def ping(self) -> None:
         self.client.admin.command("ping")
+
+    def load_garmin_token_blob(self) -> str | None:
+        row = self.db.integration_state.find_one({"_id": "garmin_tokenstore"}, {"token_blob": 1})
+        if not row:
+            return None
+        token_blob = row.get("token_blob")
+        return token_blob if isinstance(token_blob, str) else None
+
+    def save_garmin_token_blob(self, token_blob: str) -> None:
+        self.db.integration_state.update_one(
+            {"_id": "garmin_tokenstore"},
+            {
+                "$set": {
+                    "provider": "garmin",
+                    "kind": "garth_token_blob",
+                    "token_blob": token_blob,
+                    "updated_at": datetime.now(timezone.utc),
+                }
+            },
+            upsert=True,
+        )
 
     def summary(self) -> dict[str, Any]:
         latest_health = self.db.daily_health.find_one(sort=[("date", -1)])

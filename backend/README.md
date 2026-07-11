@@ -44,6 +44,12 @@ For accounts that trigger MFA, run this once from a terminal:
 python -m app.jobs.setup_garmin_tokens
 ```
 
-This stores Garmin session tokens in `GARMIN_TOKENSTORE` so the web Sync button can reuse them. The connector boundary is in `app/services/garmin/`; the official Garmin API can replace the unofficial connector without changing the API contract.
+In MongoDB production mode, the sync endpoint also accepts a one-time MFA code:
+
+```json
+{ "days": 30, "mfa_code": "123456" }
+```
+
+After a successful login, Garmin session tokens are persisted in MongoDB so later web Sync or scheduled sync calls can reuse them. Local SQLite development stores tokens in `GARMIN_TOKENSTORE`. The connector boundary is in `app/services/garmin/`; the official Garmin API can replace the unofficial connector without changing the API contract.
 
 Never commit `.env`, SQLite databases, tokens, raw Garmin files, or personal health exports.

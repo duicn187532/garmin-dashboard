@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta, timezone
+import logging
 import math
 from pathlib import Path
 import random
@@ -6,6 +7,11 @@ from typing import Any, Callable
 
 from ...config import Settings
 from .base import GarminAuthError, GarminConnector, GarminNetworkError, GarminPayload
+
+
+logger = logging.getLogger(__name__)
+TokenReader = Callable[[], str | None]
+TokenWriter = Callable[[str], None]
 
 
 class UnofficialGarminConnector(GarminConnector):
@@ -16,8 +22,18 @@ class UnofficialGarminConnector(GarminConnector):
     connector interface for the official Garmin API later.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        mfa_code: str | None = None,
+        token_reader: TokenReader | None = None,
+        token_writer: TokenWriter | None = None,
+    ):
         self.settings = settings
+        self.mfa_code = clean_mfa_code(mfa_code)
+        self.token_reader = token_reader
+        self.token_writer = token_writer
 
     def fetch(self, days: int = 30) -> GarminPayload:
         if self.settings.demo_mode:
@@ -35,13 +51,14 @@ class UnofficialGarminConnector(GarminConnector):
 
         try:
             tokenstore = self.settings.garmin_tokenstore
-            Path(tokenstore).mkdir(parents=True, exist_ok=True)
+            tokenstore_arg = self._tokenstore_arg(tokenstore)
             client = Garmin(
                 self.settings.garmin_email,
                 self.settings.garmin_password,
                 prompt_mfa=self._prompt_mfa,
             )
-            client.login(tokenstore=tokenstore)
+            client.login(tokenstore=tokenstore_arg)
+            self._persist_tokenstore(client)
         except GarminAuthError:
             raise
         except Exception as exc:  # pragma: no cover - depends on external service
@@ -60,6 +77,7 @@ class UnofficialGarminConnector(GarminConnector):
             for offset in range(days):
                 day = start + timedelta(days=offset)
                 daily_health.append(normalize_daily_health(day, client))
+            self._persist_tokenstore(client)
             return {"source": "garminconnect", "activities": activities, "daily_health": daily_health}
         except GarminAuthError:
             raise
@@ -67,12 +85,55 @@ class UnofficialGarminConnector(GarminConnector):
             raise GarminNetworkError("Garmin API request failed or returned an unexpected payload.") from exc
 
     def _prompt_mfa(self) -> str:
-        if self.settings.garmin_mfa_code:
-            return self.settings.garmin_mfa_code
+        code = self.mfa_code or clean_mfa_code(self.settings.garmin_mfa_code)
+        if code:
+            return code
         raise GarminAuthError(
-            "Garmin MFA is required. Temporarily set GARMIN_MFA_CODE in backend/.env "
+            "Garmin MFA is required. Send `mfa_code` in the sync request, temporarily set GARMIN_MFA_CODE, "
             "or run `python -m app.jobs.setup_garmin_tokens` from a terminal."
         )
+
+    def _tokenstore_arg(self, fallback_path: str) -> str:
+        token_blob = self._load_persisted_token_blob()
+        if token_blob:
+            return token_blob
+        Path(fallback_path).mkdir(parents=True, exist_ok=True)
+        return fallback_path
+
+    def _load_persisted_token_blob(self) -> str | None:
+        if not self.token_reader:
+            return None
+        try:
+            token_blob = self.token_reader()
+        except Exception as exc:  # pragma: no cover - defensive production guard
+            logger.warning("Garmin token load failed: %s", exc)
+            return None
+        if token_blob and len(token_blob.strip()) > 512:
+            return token_blob.strip()
+        return None
+
+    def _persist_tokenstore(self, client: Any) -> None:
+        if not self.token_writer:
+            return
+        try:
+            inner_client = getattr(client, "client", None)
+            dumps = getattr(inner_client, "dumps", None)
+            if not callable(dumps):
+                return
+            token_blob = dumps()
+            if token_blob:
+                self.token_writer(token_blob)
+        except Exception as exc:  # pragma: no cover - defensive production guard
+            logger.warning("Garmin token persistence failed: %s", exc)
+
+
+def clean_mfa_code(value: str | None) -> str | None:
+    if not value:
+        return None
+    code = value.strip()
+    if not code or code.lower() in {"unset", "__unset__", "none", "null"}:
+        return None
+    return code
 
 
 def normalize_activity(item: dict[str, Any]) -> dict[str, Any]:
