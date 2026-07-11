@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -11,12 +12,16 @@ from .store import MongoDataStore
 
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     if settings.database_backend == "mongodb":
-        MongoDataStore(settings).ensure_indexes()
+        try:
+            MongoDataStore(settings).ensure_indexes()
+        except Exception as exc:
+            logger.warning("MongoDB index initialization failed: %s", exc)
     else:
         init_db()
     yield

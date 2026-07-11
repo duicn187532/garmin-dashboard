@@ -165,7 +165,12 @@ class MongoDataStore:
         from pymongo import ASCENDING, DESCENDING, MongoClient
 
         self.settings = settings
-        self.client = MongoClient(settings.mongodb_uri, appname="garmin-insight")
+        self.client = MongoClient(
+            settings.mongodb_uri,
+            appname="garmin-insight",
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=5000,
+        )
         self.db = self.client[settings.mongodb_database]
         self.ASCENDING = ASCENDING
         self.DESCENDING = DESCENDING
