@@ -306,7 +306,7 @@ def normalize_chart_metrics(activity_id: str, details: Any) -> list[dict[str, An
         if not isinstance(item, dict):
             continue
         flat = flatten_metric_item(item)
-        timestamp = first_value(flat, ["startTimeGMT", "startTimeLocal", "timestamp", "sampleTime", "clockDuration"])
+        timestamp = first_value(flat, ["startTimeGMT", "startTimeLocal", "timestamp", "sampleTime"])
         points.append(
             {
                 "activity_id": activity_id,

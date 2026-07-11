@@ -162,8 +162,26 @@ def parse_datetime(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    text = str(value).replace("Z", "+00:00")
-    parsed = datetime.fromisoformat(text)
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric > 10_000_000_000:
+            numeric = numeric / 1000
+        if numeric > 946_684_800:
+            return datetime.fromtimestamp(numeric, tz=timezone.utc)
+        return None
+    text = str(value).strip().replace("Z", "+00:00")
+    if not text:
+        return None
+    try:
+        numeric = float(text)
+    except ValueError:
+        numeric = None
+    if numeric is not None:
+        return parse_datetime(numeric)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except (TypeError, ValueError):
+        return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
@@ -173,4 +191,3 @@ def parse_date(value: Any) -> date:
     if isinstance(value, datetime):
         return value.date()
     return date.fromisoformat(str(value)[:10])
-
